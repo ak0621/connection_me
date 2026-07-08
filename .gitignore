@@ -1,0 +1,10 @@
+build/
+dist/
+.cache/
+*.log
+.DS_Store
+
+# Local planning/session notes
+task_plan.md
+progress.md
+findings.md

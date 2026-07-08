@@ -1,0 +1,56 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            artifact: mybarrier-linux-x86_64
+            exe: build/mybarrier
+          - name: macos-arm64
+            os: macos-latest
+            artifact: mybarrier-macos-arm64
+            exe: build/mybarrier
+          - name: windows-x86_64
+            os: windows-latest
+            artifact: mybarrier-windows-x86_64
+            exe: build/Release/mybarrier.exe
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Windows package tools
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: choco install nsis -y --no-progress
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --config Release -j
+      - name: Package installer
+        run: cmake --build build --target package --config Release
+      - name: Smoke test on Unix
+        if: runner.os != 'Windows'
+        run: tests/smoke.sh ${{ matrix.exe }}
+      - name: Copy artifact
+        shell: bash
+        run: |
+          mkdir -p dist/${{ matrix.artifact }}
+          cp "${{ matrix.exe }}" dist/${{ matrix.artifact }}/
+          cp README.md dist/${{ matrix.artifact }}/
+          cp docs/build-artifacts.md dist/${{ matrix.artifact }}/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/${{ matrix.artifact }}
+            build/mybarrier-*
