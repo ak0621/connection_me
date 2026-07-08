@@ -8,6 +8,7 @@
 #include <iostream>
 #include <sstream>
 #include <thread>
+#include <utility>
 
 namespace mybarrier {
 namespace {

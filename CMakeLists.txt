@@ -27,6 +27,7 @@ else()
 endif()
 
 if(WIN32)
+    target_compile_definitions(mybarrier PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(mybarrier PRIVATE ws2_32)
 else()
     target_link_libraries(mybarrier PRIVATE pthread)
