@@ -2,7 +2,7 @@
 
 `my_barrier` is a cross-platform LAN suite prototype for sharing keyboard/mouse input, transferring files directly between trusted devices, and synchronizing clipboard text across macOS, Windows, and Linux.
 
-Current implementation: C++20 daemon/CLI MVP, with one shared wire protocol for macOS, Windows, and Linux builds.
+Current implementation: C++20 daemon/CLI MVP plus an optional Qt Widgets desktop UI, with one shared wire protocol for macOS, Windows, and Linux builds.
 
 ## Implemented
 - Persistent device identity in the local config directory.
@@ -12,13 +12,17 @@ Current implementation: C++20 daemon/CLI MVP, with one shared wire protocol for 
 - File-backed clipboard text sync.
 - Direct file transfer with safe destination filename handling and content hash verification.
 - Input event channel with authorization and logging-only adapter.
+- Barrier-style `server` and `client` CLI entry points for role-specific startup.
+- Barrier-style screen configuration export/import with `section: screens`, `section: links`, and `section: options`.
+- Bidirectional screen layout links and control-channel messages for keepalive, screen info, enter/leave, and options.
 - Platform capability diagnostics.
+- Optional Qt Widgets desktop UI for local device settings, daemon control, pairing, peer permissions, layout, clipboard send, and diagnostics.
 
 ## Not Yet Implemented
 - Real encrypted transport. Pairing currently creates a shared secret, but the MVP transport is plaintext on LAN.
 - Native GUI clipboard adapters.
 - Real keyboard/mouse capture and injection. The input path is present, authorized, and logged, ready for native adapters.
-- Desktop UI.
+- Native service integration and signed desktop installers.
 
 ## Build
 
@@ -26,6 +30,12 @@ Current Ubuntu host output:
 
 ```text
 build/mybarrier
+```
+
+If Qt 6 Widgets is installed, CMake also builds the desktop UI:
+
+```text
+build/MyBarrier
 ```
 
 Build on Linux/macOS:
@@ -46,6 +56,15 @@ Package the current platform:
 scripts/package-current.sh
 ```
 
+GUI build control:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DMYBARRIER_BUILD_GUI=ON
+cmake --build build --config Release --parallel
+```
+
+`MYBARRIER_BUILD_GUI=AUTO` is the default. It builds the Qt UI when Qt 6 Widgets is available and otherwise keeps the CLI build working. Use `ON` in CI or release builds to require the desktop app.
+
 Current Linux package output on this host:
 
 ```text
@@ -56,7 +75,7 @@ build/mybarrier-0.2.0-Linux-x86_64.tar.gz
 build/mybarrier-0.2.0-Linux-x86_64.zip
 ```
 
-macOS and Windows binaries must be built on macOS/Windows or by `.github/workflows/build.yml` CI runners. See `docs/github-ci.md` for GitHub Actions packaging steps.
+macOS and Windows binaries must be built on macOS/Windows or by `.github/workflows/build.yml` CI runners. The workflow installs Qt and requires the GUI build, so the macOS DMG contains `MyBarrier.app` for app installation. See `docs/github-ci.md` for GitHub Actions packaging steps.
 
 ## Basic Usage
 
@@ -66,10 +85,22 @@ Show local status:
 ./build/mybarrier status
 ```
 
-Start a daemon that accepts pairing:
+Start a Barrier-style server that accepts pairing:
 
 ```bash
-./build/mybarrier serve --name linux-box --port 37373 --pair-code 123456
+./build/mybarrier server --name linux-box --port 37373 --pair-code 123456 --write-config
+```
+
+Start a Barrier-style client and pair it with a server:
+
+```bash
+./build/mybarrier client --name laptop --host 192.168.1.20 --server-port 37373 --listen-port 37373 --code 123456
+```
+
+The lower-level daemon command is still available:
+
+```bash
+./build/mybarrier serve --name linux-box --port 37373 --role server --pair-code 123456
 ```
 
 Discover devices on the LAN:
@@ -82,6 +113,13 @@ Pair with another daemon:
 
 ```bash
 ./build/mybarrier pair --host 192.168.1.20 --port 37373 --code 123456
+```
+
+Create a Barrier-style screen link and export the generated config:
+
+```bash
+./build/mybarrier layout-add --from linux-box --side right --to laptop --bidirectional
+./build/mybarrier config-export --path ./barrier.conf
 ```
 
 Allow a paired peer to send input events on the receiving machine:

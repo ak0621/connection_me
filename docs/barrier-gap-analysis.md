@@ -17,7 +17,7 @@ Key Barrier areas inspected:
 
 ## High-Level Conclusion
 
-The current `mybarrier` implementation is a working C++ MVP for LAN daemon basics, pairing, file-backed clipboard sync, direct file transfer, and an authorized input-event channel. It is not yet equivalent to Barrier's actual peripheral sharing implementation.
+The current `mybarrier` implementation is a working C++ MVP for LAN daemon basics, pairing, file-backed clipboard sync, direct file transfer, an authorized input-event channel, a Qt UI shell, and Barrier-style role/config/control-channel scaffolding. It is not yet equivalent to Barrier's actual native peripheral sharing implementation.
 
 Barrier's real product core is built around:
 - a primary/secondary screen model;
@@ -31,17 +31,17 @@ Barrier's real product core is built around:
 
 | Area | Barrier Source Reference | Current Implementation | Missing / Risk |
 |------|--------------------------|------------------------|----------------|
-| Server/client role model | `src/lib/server/Server.h`, `src/lib/client/Client.h`, `src/lib/server/PrimaryClient.h` | Single daemon handles generic commands in `src/daemon.cpp`. | No primary/secondary role lifecycle, no reconnecting client, no active screen state machine. |
-| Screen topology | `src/lib/server/Config.h` | Peer store only has id/name/host/port/permissions in `src/config.h`. | No screen grid, edge links, aliases, per-screen options, jump zones, switch delays. |
+| Server/client role model | `src/lib/server/Server.h`, `src/lib/client/Client.h`, `src/lib/server/PrimaryClient.h` | `server` and `client` CLI commands map to role-specific daemon startup and optional pairing. | No active screen state machine, reconnect policy, or real edge-switch lifecycle yet. |
+| Screen topology | `src/lib/server/Config.h` | `src/barrier_config.*` exports/imports Barrier-style `screens`, `links`, and `options`; `layout-add --bidirectional` creates reciprocal edges. | No GUI drag/drop grid persistence, jump zones, or full per-screen option model yet. |
 | Native input capture | `src/lib/platform/*Screen.*`, `IPlatformScreen.h` | `src/platform.cpp` only reports planned capabilities. | No global keyboard/mouse hook, no cursor tracking, no hotkeys, no edge detection. |
 | Native input injection | `IPlatformScreen.h`, `MSWindowsScreen.cpp`, `OSXScreen.mm`, `XWindowsScreen.cpp` | `INPUT_EVENT` is authorized then written to `input-events.log`. | No real key/mouse injection, key map, modifier handling, stuck-key prevention, relative/absolute mouse motion. |
-| Protocol compatibility | `src/lib/barrier/protocol_types.h/.cpp` | Simple text frame: command + headers + body. | No Barrier protocol handshake, version negotiation, keepalive, enter/leave, key/mouse message types, option messages. |
+| Protocol compatibility | `src/lib/barrier/protocol_types.h/.cpp` | Simple text frame now includes status metadata plus keepalive, screen-info, screen enter/leave, options, clipboard, file, and input-event commands. | Not wire-compatible with Barrier binary protocol and still lacks full key/mouse event semantics. |
 | Clipboard | `Clipboard.*`, platform clipboard converters | File-backed `clipboard.txt` text only. | No native clipboard integration, no ownership/grab tracking, no multi-format text/HTML/image, no chunked streaming. |
 | File transfer / drag-drop | `StreamChunker.*`, `FileChunk.*`, `DragInformation.*`, `DropHelper.*` | Whole file in one frame with FNV hash. | No chunk streaming, resume, cancel, directory recursion, drag/drop integration, large file controls. |
 | Encryption | `SecureSocket.*`, `FingerprintDatabase.*`, GUI fingerprint flow | Pairing creates shared secret but transport is plaintext. | No TLS/Noise/QUIC encryption, no cert generation, no fingerprint trust database, no replay protection. |
 | Discovery | `src/gui/src/Zeroconf*` | UDP broadcast responder/client. | No DNS-SD/mDNS zeroconf integration, no GUI auto-config records, limited multi-interface handling. |
-| GUI | `src/gui` | CLI only. | No Qt UI, tray, setup wizard, screen layout editor, logs, fingerprint prompt, service mode controls. |
-| Process/service integration | `src/cmd/barriers`, `barrierc`, `barrierd`, GUI process control | Single `mybarrier` binary. | No separate server/client commands, no daemon/service install, no tray receivers, no platform manifests. |
+| GUI | `src/gui` | Optional Qt Widgets UI shell exists for local settings, daemon control, pairing, permissions, layout, clipboard, and diagnostics. | No tray, setup wizard, native permission onboarding, fingerprint prompt, or service mode controls yet. |
+| Process/service integration | `src/cmd/barriers`, `barrierc`, `barrierd`, GUI process control | Single `mybarrier` binary with `server` and `client` subcommands plus optional `MyBarrier` GUI. | No service install, tray receivers, or platform service manifests yet. |
 | Event loop architecture | `src/lib/base`, `src/lib/mt`, `SocketMultiplexer` | Thread-per-client and blocking sockets. | No central event queue, timer system, socket multiplexer, structured async lifecycle. |
 | Options and hotkeys | `option_types.h`, `InputFilter.*`, GUI dialogs | Peer permission toggles only. | No switch delay, lock cursor, keyboard broadcast, hotkey actions, per-screen options. |
 | Screen saver / power/session handling | `IPlatformScreen.h`, platform screen saver classes | Not implemented. | No screen saver sync, suspend/resume, session switch handling. |
@@ -50,18 +50,21 @@ Barrier's real product core is built around:
 ## What Is Implemented Now
 
 Current code covers these MVP pieces:
-- `src/daemon.cpp`: daemon listener, UDP discovery, pair command, clipboard push, file send, input event logging.
-- `src/config.h/.cpp`: local device identity, peer trust store, file-backed clipboard.
+- `src/daemon.cpp`: daemon listener, UDP discovery, pair command, clipboard push, file send, input event logging, keepalive, screen-info, enter/leave, and options control messages.
+- `src/config.h/.cpp`: local device identity, peer trust store, layout links, file-backed clipboard.
+- `src/barrier_config.h/.cpp`: Barrier-style config export/import for screens, links, and options.
 - `src/protocol.h/.cpp`: small framed protocol.
 - `src/net.h/.cpp`: basic TCP/UDP socket wrappers.
 - `src/platform.cpp`: platform capability diagnostics only.
+- `src/gui`: optional Qt Widgets UI shell.
 - `tests/smoke.sh`: pairing, clipboard sync, input authorization/logging, file transfer.
 - `tests/discovery_smoke.sh`: UDP discovery.
+- `tests/barrier_config_smoke.sh`: Barrier-style config export/import and bidirectional layout links.
 
 ## Priority To Reach Barrier-Like Functionality
 
-1. Add a real role model: `server`/`client` mode, active peer, reconnect, status events.
-2. Add screen topology config: devices, edges, coordinates, jump zones, emergency hotkey.
+1. Add active screen state, reconnect policy, and status events on top of the new `server`/`client` commands.
+2. Extend screen topology config with coordinates, jump zones, emergency hotkey, and per-screen options.
 3. Replace `INPUT_EVENT` logging with native adapter interfaces and implement Linux X11 first.
 4. Add native clipboard adapters for Linux X11/Wayland, Windows, and macOS.
 5. Add encrypted transport and peer identity verification.

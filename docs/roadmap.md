@@ -2,7 +2,7 @@
 
 ## Phase 0: Toolchain Setup
 - Use the available C++20/GCC/CMake toolchain.
-- Install Qt 6 later for the native desktop UI.
+- Install Qt 6 for native desktop UI builds, or use the default AUTO mode to keep CLI-only builds working.
 - Configure `/dev/uinput` permissions later for Linux input injection.
 - Decide whether to initialize git in `/home/akun/work/my_barrier`.
 
@@ -49,6 +49,7 @@ Deliverable:
 
 ## Phase 5: Input Sharing
 - Define normalized input event schema.
+- Implement Barrier-style server/client startup and screen topology configuration.
 - Implement screen-edge switching and emergency return hotkey.
 - Implement Linux X11 backend first if a GUI/X11 test session is available.
 - Add macOS and Windows adapters.
@@ -57,18 +58,22 @@ Deliverable:
 Deliverable:
 - one controller device can operate one target device across a configured screen edge.
 
+Status: role-specific `server`/`client` commands, Barrier-style config export/import, bidirectional layout links, and keepalive/screen-info/control messages are implemented. Native capture/injection is still pending.
+
 ## Phase 6: Desktop UI
-- Build Tauri UI for:
-  - discovered devices;
-  - pairing;
-  - permissions;
-  - layout editor;
-  - clipboard toggle;
-  - file transfer history;
+- Build Qt Widgets UI for:
+  - local device settings;
+  - daemon start and stop;
+  - discovery and pairing;
+  - peer permissions;
+  - Barrier-style layout editor;
+  - clipboard send;
   - diagnostics.
 
 Deliverable:
-- users can configure and operate the suite without CLI commands.
+- users can configure the suite and launch the daemon without typing CLI commands.
+
+Status: initial Qt Widgets UI implemented as an optional build target. File transfer history and native permission onboarding are still pending.
 
 ## Phase 7: Packaging
 - Linux: `.deb`/AppImage plus service integration.
@@ -76,7 +81,7 @@ Deliverable:
 - Windows: signed installer with background service option.
 
 ## Test Strategy
-- Unit tests for protocol encoding, trust store, path sanitization, hash verification.
+- Unit tests for protocol encoding, trust store, path sanitization, hash verification, and Barrier-style config parsing.
 - Integration tests for daemon-to-daemon local loopback.
 - LAN tests across two machines.
 - Platform tests for input/clipboard adapters on each OS.

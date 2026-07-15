@@ -1,5 +1,6 @@
 #include "cli.h"
 
+#include "barrier_config.h"
 #include "config.h"
 #include "daemon.h"
 #include "net.h"
@@ -27,13 +28,17 @@ Usage:
   mybarrier artifact-info
   mybarrier status [--name NAME] [--port PORT] [--role server|client|peer]
   mybarrier role-set server|client|peer
+  mybarrier server [--name NAME] [--port PORT] [--pair-code CODE] [--write-config] [--config FILE]
+  mybarrier client --host HOST [--server-port PORT] [--listen-port PORT] [--name NAME] [--code CODE]
   mybarrier serve [--name NAME] [--port PORT] [--role server|client|peer] [--pair-code CODE]
   mybarrier discover [--timeout MS] [--discovery-port PORT]
   mybarrier pair --host HOST [--port PORT] --code CODE
+  mybarrier config-export [--path FILE]
+  mybarrier config-import --path FILE
   mybarrier ping --peer PEER_ID_OR_NAME
   mybarrier peers
   mybarrier peer-permit --peer PEER_ID_OR_NAME [--clipboard 0|1] [--files 0|1] [--input 0|1]
-  mybarrier layout-add [--from SCREEN] --side left|right|top|bottom --to SCREEN
+  mybarrier layout-add [--from SCREEN] --side left|right|top|bottom --to SCREEN [--bidirectional]
   mybarrier layout-list
   mybarrier layout-clear
   mybarrier clipboard-set TEXT
@@ -90,6 +95,28 @@ std::size_t parse_size_option(const std::string& value, std::size_t fallback) {
     return fallback;
 }
 
+std::string reverse_layout_side(const std::string& side) {
+    if (side == "left") return "right";
+    if (side == "right") return "left";
+    if (side == "top") return "bottom";
+    if (side == "bottom") return "top";
+    return {};
+}
+
+void save_layout_link(ConfigStore& store, const LayoutLink& link, bool bidirectional) {
+    store.save_layout_link(link);
+    if (!bidirectional) {
+        return;
+    }
+    LayoutLink reverse;
+    reverse.source = link.target;
+    reverse.side = reverse_layout_side(link.side);
+    reverse.target = link.source;
+    if (!reverse.side.empty()) {
+        store.save_layout_link(reverse);
+    }
+}
+
 Frame request_host(const std::string& host, uint16_t port, Frame frame) {
     SocketRuntime sockets;
     mb_socket_t socket = tcp_connect(host, port);
@@ -125,6 +152,40 @@ void print_response_or_throw(const Frame& response) {
 
 std::vector<char> bytes_from_text(const std::string& text) {
     return std::vector<char>(text.begin(), text.end());
+}
+
+Peer pair_with_host(ConfigStore& store, const std::string& host, uint16_t port, const std::string& code) {
+    if (host.empty() || code.empty()) {
+        throw std::runtime_error("pair requires host and code");
+    }
+    auto local = store.load_device({}, 0);
+    Frame request;
+    request.command = "PAIR";
+    request.headers = {
+        {"Client-Id", local.id},
+        {"Client-Name", local.name},
+        {"Client-Port", std::to_string(local.port)},
+        {"Client-Role", local.role},
+        {"Pair-Code", code},
+    };
+    auto response = request_host(host, port, request);
+    if (response.command == "ERR") {
+        throw std::runtime_error(header_value(response, "Message", "pairing failed"));
+    }
+    Peer peer;
+    peer.id = header_value(response, "Device-Id");
+    peer.name = header_value(response, "Device-Name", peer.id);
+    peer.host = host;
+    peer.port = parse_port(header_value(response, "Port"), port);
+    peer.secret = header_value(response, "Secret");
+    peer.allow_clipboard = true;
+    peer.allow_files = true;
+    peer.allow_input = true;
+    if (peer.id.empty() || peer.secret.empty()) {
+        throw std::runtime_error("invalid pairing response");
+    }
+    store.save_peer(peer);
+    return peer;
 }
 
 void print_artifact_info() {
@@ -224,6 +285,70 @@ int run_cli(const std::vector<std::string>& args) {
         return 0;
     }
 
+    if (command == "server") {
+        DaemonOptions options;
+        options.port = parse_port(option_value(args, "--port"), default_port);
+        options.discovery_port = parse_port(option_value(args, "--discovery-port"), default_discovery_port);
+        options.name = option_value(args, "--name");
+        options.role = "server";
+        options.pair_code = option_value(args, "--pair-code");
+        store.load_device(options.name, options.port, options.role);
+        if (has_option(args, "--write-config") || has_option(args, "--config")) {
+            std::filesystem::path path = option_value(args, "--config");
+            if (path.empty()) {
+                path = default_barrier_config_path(store);
+            }
+            write_barrier_config_file(path, collect_barrier_config(store));
+            std::cout << "config=" << path.string() << "\n";
+        }
+        Daemon daemon(store);
+        return daemon.run(options);
+    }
+
+    if (command == "client") {
+        std::string host = option_value(args, "--host");
+        std::string code = option_value(args, "--code");
+        uint16_t server_port = parse_port(option_value(args, "--server-port", option_value(args, "--port")), default_port);
+        uint16_t listen_port = parse_port(option_value(args, "--listen-port"), default_port);
+        store.load_device(option_value(args, "--name"), listen_port, "client");
+        if (!host.empty() && !code.empty()) {
+            auto peer = pair_with_host(store, host, server_port, code);
+            std::cout << "paired server id=" << peer.id << " name=" << peer.name << " host=" << peer.host << " port=" << peer.port << "\n";
+        } else if (host.empty()) {
+            throw std::runtime_error("client requires --host");
+        }
+        DaemonOptions options;
+        options.port = listen_port;
+        options.discovery_port = parse_port(option_value(args, "--discovery-port"), default_discovery_port);
+        options.name = option_value(args, "--name");
+        options.role = "client";
+        Daemon daemon(store);
+        return daemon.run(options);
+    }
+
+    if (command == "config-export") {
+        BarrierRuntimeConfig config = collect_barrier_config(store);
+        std::filesystem::path path = option_value(args, "--path");
+        if (path.empty()) {
+            std::cout << render_barrier_config(config);
+        } else {
+            write_barrier_config_file(path, config);
+            std::cout << "config=" << path.string() << "\n";
+        }
+        return 0;
+    }
+
+    if (command == "config-import") {
+        std::filesystem::path path = option_value(args, "--path");
+        if (path.empty()) {
+            throw std::runtime_error("config-import requires --path");
+        }
+        auto config = parse_barrier_config_text(read_text_file(path));
+        import_barrier_config(store, config);
+        std::cout << "imported screens=" << config.screens.size() << " links=" << config.links.size() << "\n";
+        return 0;
+    }
+
     if (command == "serve") {
         DaemonOptions options;
         options.port = parse_port(option_value(args, "--port"), default_port);
@@ -273,33 +398,7 @@ int run_cli(const std::vector<std::string>& args) {
         if (host.empty() || code.empty()) {
             throw std::runtime_error("pair requires --host and --code");
         }
-        auto local = store.load_device({}, 0);
-        Frame request;
-        request.command = "PAIR";
-        request.headers = {
-            {"Client-Id", local.id},
-            {"Client-Name", local.name},
-            {"Client-Port", std::to_string(local.port)},
-            {"Client-Role", local.role},
-            {"Pair-Code", code},
-        };
-        auto response = request_host(host, port, request);
-        if (response.command == "ERR") {
-            throw std::runtime_error(header_value(response, "Message", "pairing failed"));
-        }
-        Peer peer;
-        peer.id = header_value(response, "Device-Id");
-        peer.name = header_value(response, "Device-Name", peer.id);
-        peer.host = host;
-        peer.port = parse_port(header_value(response, "Port"), port);
-        peer.secret = header_value(response, "Secret");
-        peer.allow_clipboard = true;
-        peer.allow_files = true;
-        peer.allow_input = true;
-        if (peer.id.empty() || peer.secret.empty()) {
-            throw std::runtime_error("invalid pairing response");
-        }
-        store.save_peer(peer);
+        Peer peer = pair_with_host(store, host, port, code);
         std::cout << "paired id=" << peer.id << " name=" << peer.name << " host=" << peer.host << " port=" << peer.port << "\n";
         return 0;
     }
@@ -381,8 +480,13 @@ int run_cli(const std::vector<std::string>& args) {
         if (link.source.empty() || !is_valid_layout_side(link.side) || link.target.empty()) {
             throw std::runtime_error("layout-add requires --side left|right|top|bottom and --to SCREEN");
         }
-        store.save_layout_link(link);
-        std::cout << "layout " << link.source << "." << link.side << " -> " << link.target << "\n";
+        bool bidirectional = has_option(args, "--bidirectional");
+        save_layout_link(store, link, bidirectional);
+        std::cout << "layout " << link.source << "." << link.side << " -> " << link.target;
+        if (bidirectional) {
+            std::cout << " bidirectional=1";
+        }
+        std::cout << "\n";
         return 0;
     }
 

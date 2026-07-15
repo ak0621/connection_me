@@ -1,5 +1,6 @@
 #include "daemon.h"
 
+#include "barrier_config.h"
 #include "net.h"
 #include "platform.h"
 #include "util.h"
@@ -37,6 +38,25 @@ std::filesystem::path collision_safe_path(const std::filesystem::path& dir, cons
         return path;
     }
     return dir / (random_hex(4) + "-" + filename);
+}
+
+bool has_peer_identity(const Frame& frame) {
+    return !header_value(frame, "Source-Id").empty() || !header_value(frame, "Secret").empty();
+}
+
+void log_control_event(ConfigStore& store, const Peer& peer, const Frame& frame) {
+    std::filesystem::create_directories(store.home());
+    std::ofstream log(store.home() / "control-events.log", std::ios::app);
+    log << now_iso8601() << " from=" << peer.id << " command=" << frame.command;
+    for (const auto& [key, value] : frame.headers) {
+        if (key != "Secret") {
+            log << " " << key << "=" << value;
+        }
+    }
+    if (!frame.body.empty()) {
+        log << " body=" << std::string(frame.body.begin(), frame.body.end());
+    }
+    log << "\n";
 }
 
 }  // namespace
@@ -108,6 +128,7 @@ void Daemon::handle_client(mb_socket_t client, std::string remote_ip, DeviceConf
 
 Frame Daemon::handle_frame(const Frame& frame, const std::string& remote_ip, const DeviceConfig& device, const std::string& pair_code) {
     if (frame.command == "HELLO" || frame.command == "STATUS") {
+        auto runtime_config = collect_barrier_config(store_);
         return ok_frame({
             {"Device-Id", device.id},
             {"Device-Name", device.name},
@@ -117,6 +138,9 @@ Frame Daemon::handle_frame(const Frame& frame, const std::string& remote_ip, con
             {"Version", "0.2.0"},
             {"Protocol-Major", std::to_string(app_protocol_major)},
             {"Protocol-Minor", std::to_string(app_protocol_minor)},
+            {"Screens", std::to_string(runtime_config.screens.size())},
+            {"Layout-Links", std::to_string(runtime_config.links.size())},
+            {"Capabilities", "pairing,clipboard,files,input-events,screen-info,keepalive"},
         });
     }
 
@@ -133,6 +157,35 @@ Frame Daemon::handle_frame(const Frame& frame, const std::string& remote_ip, con
             {"Protocol-Major", std::to_string(app_protocol_major)},
             {"Protocol-Minor", std::to_string(app_protocol_minor)},
         });
+    }
+
+    if (frame.command == "KEEPALIVE") {
+        if (has_peer_identity(frame) && !verify_peer(header_value(frame, "Source-Id"), header_value(frame, "Secret"), nullptr, nullptr)) {
+            return error_frame("unauthorized keepalive");
+        }
+        return ok_frame({{"Alive", "1"}, {"From", device.id}, {"Role", device.role}});
+    }
+
+    if (frame.command == "SCREEN_INFO") {
+        if (has_peer_identity(frame) && !verify_peer(header_value(frame, "Source-Id"), header_value(frame, "Secret"), nullptr, nullptr)) {
+            return error_frame("unauthorized screen info");
+        }
+        auto runtime_config = collect_barrier_config(store_);
+        auto text = render_barrier_config(runtime_config);
+        return ok_frame({
+            {"Screens", std::to_string(runtime_config.screens.size())},
+            {"Layout-Links", std::to_string(runtime_config.links.size())},
+            {"Format", "barrier-conf"},
+        }, std::vector<char>(text.begin(), text.end()));
+    }
+
+    if (frame.command == "SCREEN_ENTER" || frame.command == "SCREEN_LEAVE" || frame.command == "SET_OPTIONS") {
+        Peer peer;
+        if (!verify_peer(header_value(frame, "Source-Id"), header_value(frame, "Secret"), "input", &peer)) {
+            return error_frame("unauthorized control event");
+        }
+        log_control_event(store_, peer, frame);
+        return ok_frame({{"Control-Adapter", "logged-only"}, {"Command", frame.command}});
     }
 
     if (frame.command == "PAIR") {

@@ -27,7 +27,7 @@ Reasoning:
 - The current host already has GCC and CMake, so C++ is immediately buildable here.
 - Platform-specific input and clipboard behavior can stay behind adapter interfaces.
 
-Current host gap: Qt is not installed, so the first implementation is a C++ daemon/CLI MVP. Native desktop UI can be added once Qt 6 or another UI stack is available.
+Current host gap: Qt is not installed in this local shell, so the default local build skips the GUI. The project now has an optional Qt Widgets UI target that builds when Qt 6 Widgets is available, and CI requires that target for release artifacts.
 
 ## Runtime Model
 

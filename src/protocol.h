@@ -10,7 +10,7 @@
 namespace mybarrier {
 
 constexpr int app_protocol_major = 0;
-constexpr int app_protocol_minor = 2;
+constexpr int app_protocol_minor = 3;
 constexpr std::size_t max_frame_body_bytes = 8 * 1024 * 1024;
 
 struct Frame {

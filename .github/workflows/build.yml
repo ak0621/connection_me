@@ -37,12 +37,17 @@ jobs:
           if (Test-Path $nsisPath) {
             Add-Content $env:GITHUB_PATH $nsisPath
           }
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.*"
+          cache: true
       - name: Configure
         shell: bash
         run: |
           set -o pipefail
           mkdir -p build
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release 2>&1 | tee build/configure.log
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DMYBARRIER_BUILD_GUI=ON 2>&1 | tee build/configure.log
       - name: Build
         shell: bash
         run: |
@@ -56,7 +61,10 @@ jobs:
       - name: Smoke test on Unix
         if: runner.os != 'Windows'
         shell: bash
-        run: tests/smoke.sh ${{ matrix.exe }}
+        run: |
+          tests/smoke.sh ${{ matrix.exe }}
+          tests/discovery_smoke.sh ${{ matrix.exe }}
+          tests/barrier_config_smoke.sh ${{ matrix.exe }}
       - name: Copy artifact
         shell: bash
         run: |
