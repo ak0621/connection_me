@@ -82,6 +82,13 @@ The workflow `.github/workflows/build.yml` builds and uploads:
 
 Each uploaded artifact contains the runnable CLI directory plus CPack packages from `build/mybarrier-*`. The workflow installs Qt and configures `-DMYBARRIER_BUILD_GUI=ON`, so the CPack packages include the desktop UI: Linux `MyBarrier`, macOS `MyBarrier.app`, and Windows `MyBarrier.exe`. Linux CI produces `.deb`, macOS CI produces `.dmg`, and Windows CI produces an NSIS `.exe` installer plus `.zip`.
 
+The macOS app bundle produced by public CI is ad-hoc signed during packaging, but it is not notarized with an Apple Developer ID. On first launch, macOS Gatekeeper can still require a manual trust override. For a package downloaded from this repository, remove the quarantine flag after dragging the app to Applications:
+
+```sh
+sudo xattr -dr com.apple.quarantine /Applications/MyBarrier.app
+open /Applications/MyBarrier.app
+```
+
 A Linux machine cannot directly produce a native macOS executable without an Apple toolchain. Windows binaries can be cross-compiled in some setups, but this project uses Windows CI or a Windows machine as the reliable path.
 
 ## Runtime Interop

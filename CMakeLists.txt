@@ -98,6 +98,22 @@ if(APPLE AND MYBARRIER_GUI_AVAILABLE)
     endif()
     install(PROGRAMS $<TARGET_FILE:mybarrier> DESTINATION "MyBarrier.app/Contents/MacOS" RENAME mybarrier)
     install(FILES ${MYBARRIER_DOC_FILES} DESTINATION "MyBarrier.app/Contents/Resources/docs")
+    install(CODE [[
+        find_program(CODESIGN_EXECUTABLE codesign)
+        if(CODESIGN_EXECUTABLE AND EXISTS "${CMAKE_INSTALL_PREFIX}/MyBarrier.app")
+            execute_process(
+                COMMAND "${CODESIGN_EXECUTABLE}" --force --deep --sign - "${CMAKE_INSTALL_PREFIX}/MyBarrier.app"
+                RESULT_VARIABLE MYBARRIER_CODESIGN_RESULT
+                OUTPUT_VARIABLE MYBARRIER_CODESIGN_OUTPUT
+                ERROR_VARIABLE MYBARRIER_CODESIGN_ERROR
+            )
+            if(NOT MYBARRIER_CODESIGN_RESULT EQUAL 0)
+                message(FATAL_ERROR "Ad-hoc codesign failed: ${MYBARRIER_CODESIGN_OUTPUT}\n${MYBARRIER_CODESIGN_ERROR}")
+            endif()
+        else()
+            message(WARNING "codesign was not found; MyBarrier.app will remain unsigned.")
+        endif()
+    ]])
 else()
     install(TARGETS mybarrier RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     if(MYBARRIER_GUI_AVAILABLE)
