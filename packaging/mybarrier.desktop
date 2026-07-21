@@ -3,6 +3,7 @@ Type=Application
 Name=MyBarrier
 Comment=LAN keyboard, clipboard, and file sharing
 Exec=MyBarrier
+Icon=mybarrier
 Terminal=false
 Categories=Network;Utility;
 StartupNotify=true

@@ -11,6 +11,7 @@
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QDockWidget>
 #include <QDir>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -75,16 +76,49 @@ QString checkedArg(const QTableWidgetItem* item) {
     return item != nullptr && item->checkState() == Qt::Checked ? QStringLiteral("1") : QStringLiteral("0");
 }
 
+QString runtimePlatformName() {
+#ifdef Q_OS_WIN
+    return QStringLiteral("Windows");
+#elif defined(Q_OS_MACOS) || defined(Q_OS_MAC)
+    return QStringLiteral("macOS");
+#elif defined(Q_OS_LINUX)
+    return QStringLiteral("Linux");
+#else
+    return QStringLiteral("Unknown platform");
+#endif
+}
+
+QString quoteForLog(QString value) {
+    if (value.isEmpty()) {
+        return QStringLiteral("''");
+    }
+    const bool needsQuotes = value.contains(QLatin1Char(' ')) || value.contains(QLatin1Char('\t')) ||
+                             value.contains(QLatin1Char('"'));
+    if (!needsQuotes) {
+        return value;
+    }
+    value.replace(QStringLiteral("\\"), QStringLiteral("\\\\"));
+    value.replace(QStringLiteral("\""), QStringLiteral("\\\""));
+    return QStringLiteral("\"%1\"").arg(value);
+}
+
+QString formatCommandForLog(const QString& program, const QStringList& args) {
+    QStringList parts;
+    parts << quoteForLog(program);
+    for (const QString& arg : args) {
+        parts << quoteForLog(arg);
+    }
+    return parts.join(QStringLiteral(" "));
+}
+
 QString commandOutput(const MainWindow::CommandResult& result) {
     QStringList parts;
+    parts << QStringLiteral("exit=%1").arg(result.exitCode);
     if (!result.output.trimmed().isEmpty()) {
-        parts << result.output.trimmed();
+        parts << QStringLiteral("stdout:\n%1").arg(result.output.trimmed());
     }
     if (!result.error.trimmed().isEmpty()) {
-        parts << result.error.trimmed();
-    }
-    if (parts.isEmpty()) {
-        parts << QStringLiteral("exit=%1").arg(result.exitCode);
+        parts << QStringLiteral("stderr:\n%1").arg(result.error.trimmed());
     }
     return parts.join(QStringLiteral("\n"));
 }
@@ -194,7 +228,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), cliPath_(resolveC
         appendLog(QStringLiteral("daemon stopped exit=%1").arg(exitCode));
     });
 
+    appendLog(QStringLiteral("MyBarrier GUI started on %1").arg(runtimePlatformName()));
     refreshAll();
+    appendLog(QStringLiteral("Config home: %1").arg(QString::fromStdString(store_.home().string())));
     appendLog(cliPath_.isEmpty() ? QStringLiteral("CLI executable was not found") : QStringLiteral("CLI executable: %1").arg(cliPath_));
 }
 
@@ -236,15 +272,13 @@ void MainWindow::buildUi() {
     tabs->addTab(createDiagnosticsPage(), QStringLiteral("Diagnostics"));
     root->addWidget(tabs, 1);
 
-    auto* logBox = new QGroupBox(QStringLiteral("Activity"), central);
-    auto* logLayout = new QVBoxLayout(logBox);
-    logView_ = new QTextEdit(logBox);
-    logView_->setReadOnly(true);
-    logView_->setMinimumHeight(120);
-    logLayout->addWidget(logView_);
-    root->addWidget(logBox);
-
     setCentralWidget(central);
+    createLogDock();
+    if (logDock_ != nullptr) {
+        QAction* logAction = logDock_->toggleViewAction();
+        logAction->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
+        toolbar->addAction(logAction);
+    }
     statusBar()->showMessage(QStringLiteral("Ready"));
     setDaemonRunning(false);
 }
@@ -397,6 +431,41 @@ QWidget* MainWindow::createDiagnosticsPage() {
     return page;
 }
 
+void MainWindow::createLogDock() {
+    logDock_ = new QDockWidget(QStringLiteral("Run Log"), this);
+    logDock_->setObjectName(QStringLiteral("RunLogDock"));
+    logDock_->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::RightDockWidgetArea);
+    logDock_->setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
+
+    auto* panel = new QWidget(logDock_);
+    auto* layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(8, 8, 8, 8);
+    layout->setSpacing(6);
+
+    auto* controls = new QHBoxLayout();
+    auto* platformLabel = new QLabel(QStringLiteral("%1 runtime").arg(runtimePlatformName()), panel);
+    auto* clearButton = new QPushButton(style()->standardIcon(QStyle::SP_DialogResetButton), QStringLiteral("Clear"), panel);
+    connect(clearButton, &QPushButton::clicked, this, [this]() {
+        if (logView_ != nullptr) {
+            logView_->clear();
+        }
+    });
+    controls->addWidget(platformLabel);
+    controls->addStretch(1);
+    controls->addWidget(clearButton);
+    layout->addLayout(controls);
+
+    logView_ = new QTextEdit(panel);
+    logView_->setReadOnly(true);
+    logView_->setMinimumHeight(180);
+    logView_->setLineWrapMode(QTextEdit::NoWrap);
+    layout->addWidget(logView_);
+
+    logDock_->setWidget(panel);
+    addDockWidget(Qt::BottomDockWidgetArea, logDock_);
+    logDock_->show();
+}
+
 QString MainWindow::resolveCliPath() const {
     const QString envPath = qEnvironmentVariable("MYBARRIER_CLI");
     if (!envPath.isEmpty() && QFileInfo(envPath).isExecutable()) {
@@ -427,31 +496,49 @@ QString MainWindow::resolveCliPath() const {
 
 MainWindow::CommandResult MainWindow::runCli(const QStringList& args, int timeoutMs) {
     if (cliPath_.isEmpty()) {
-        return {-1, {}, QStringLiteral("mybarrier CLI executable was not found")};
+        CommandResult result{-1, {}, QStringLiteral("mybarrier CLI executable was not found")};
+        appendLog(commandOutput(result));
+        return result;
     }
+
+    appendLog(QStringLiteral("command: %1").arg(formatCommandForLog(cliPath_, args)));
 
     QProcess process;
     process.setProgram(cliPath_);
     process.setArguments(args);
     process.start();
     if (!process.waitForStarted(1500)) {
-        return {-1, {}, process.errorString()};
+        CommandResult result{-1, {}, process.errorString()};
+        appendLog(commandOutput(result));
+        return result;
     }
     if (!process.waitForFinished(timeoutMs)) {
         process.kill();
         process.waitForFinished(1000);
-        return {-1, QString::fromLocal8Bit(process.readAllStandardOutput()), QStringLiteral("command timed out")};
+        CommandResult result{-1, QString::fromLocal8Bit(process.readAllStandardOutput()), QStringLiteral("command timed out")};
+        appendLog(commandOutput(result));
+        return result;
     }
-    return {process.exitCode(), QString::fromLocal8Bit(process.readAllStandardOutput()), QString::fromLocal8Bit(process.readAllStandardError())};
+    CommandResult result{process.exitCode(), QString::fromLocal8Bit(process.readAllStandardOutput()), QString::fromLocal8Bit(process.readAllStandardError())};
+    appendLog(commandOutput(result));
+    return result;
 }
 
 void MainWindow::appendLog(const QString& text) {
-    const QString trimmed = text.trimmed();
-    if (trimmed.isEmpty() || logView_ == nullptr) {
+    if (logView_ == nullptr) {
         return;
     }
+    QString normalized = text.trimmed();
+    if (normalized.isEmpty()) {
+        return;
+    }
+    normalized.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    normalized.replace(QChar::CarriageReturn, QChar::LineFeed);
     const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"));
-    logView_->append(QStringLiteral("[%1] %2").arg(timestamp, trimmed));
+    const QStringList lines = normalized.split(QChar::LineFeed, Qt::SkipEmptyParts);
+    for (const QString& line : lines) {
+        logView_->append(QStringLiteral("[%1] %2").arg(timestamp, line.trimmed()));
+    }
 }
 
 void MainWindow::refreshAll() {
@@ -560,13 +647,15 @@ void MainWindow::startDaemon() {
 
     daemon_.setProgram(cliPath_);
     daemon_.setArguments(args);
+    appendLog(QStringLiteral("daemon command: %1").arg(formatCommandForLog(cliPath_, args)));
     daemon_.start();
     if (!daemon_.waitForStarted(1800)) {
+        appendLog(QStringLiteral("daemon failed to start: %1").arg(daemon_.errorString()));
         QMessageBox::warning(this, QStringLiteral("MyBarrier"), daemon_.errorString());
         return;
     }
     setDaemonRunning(true);
-    appendLog(QStringLiteral("daemon started"));
+    appendLog(QStringLiteral("daemon started pid=%1").arg(daemon_.processId()));
 }
 
 void MainWindow::stopDaemon() {
@@ -574,6 +663,7 @@ void MainWindow::stopDaemon() {
         setDaemonRunning(false);
         return;
     }
+    appendLog(QStringLiteral("stopping daemon"));
     daemon_.terminate();
     if (!daemon_.waitForFinished(2500)) {
         daemon_.kill();
@@ -583,8 +673,7 @@ void MainWindow::stopDaemon() {
 }
 
 void MainWindow::discoverPeers() {
-    const CommandResult result = runCli({QStringLiteral("discover"), QStringLiteral("--timeout"), QStringLiteral("1500")}, 3000);
-    appendLog(commandOutput(result));
+    runCli({QStringLiteral("discover"), QStringLiteral("--timeout"), QStringLiteral("1500")}, 3000);
 }
 
 void MainWindow::pairPeer() {
@@ -595,8 +684,7 @@ void MainWindow::pairPeer() {
         QMessageBox::warning(this, QStringLiteral("MyBarrier"), QStringLiteral("Host and code are required"));
         return;
     }
-    const CommandResult result = runCli({QStringLiteral("pair"), QStringLiteral("--host"), host, QStringLiteral("--port"), port, QStringLiteral("--code"), code}, 8000);
-    appendLog(commandOutput(result));
+    runCli({QStringLiteral("pair"), QStringLiteral("--host"), host, QStringLiteral("--port"), port, QStringLiteral("--code"), code}, 8000);
     refreshAll();
 }
 
@@ -605,8 +693,7 @@ void MainWindow::pingSelectedPeer() {
     if (peerId.isEmpty()) {
         return;
     }
-    const CommandResult result = runCli({QStringLiteral("ping"), QStringLiteral("--peer"), peerId}, 5000);
-    appendLog(commandOutput(result));
+    runCli({QStringLiteral("ping"), QStringLiteral("--peer"), peerId}, 5000);
 }
 
 void MainWindow::sendClipboardToPeer() {
@@ -614,8 +701,7 @@ void MainWindow::sendClipboardToPeer() {
     if (peerId.isEmpty()) {
         return;
     }
-    const CommandResult result = runCli({QStringLiteral("clipboard-send"), QStringLiteral("--peer"), peerId, QStringLiteral("--text"), clipboardEdit_->text()}, 8000);
-    appendLog(commandOutput(result));
+    runCli({QStringLiteral("clipboard-send"), QStringLiteral("--peer"), peerId, QStringLiteral("--text"), clipboardEdit_->text()}, 8000);
 }
 
 void MainWindow::saveLayoutLink() {
@@ -623,14 +709,12 @@ void MainWindow::saveLayoutLink() {
     if (target.isEmpty()) {
         return;
     }
-    const CommandResult result = runCli({QStringLiteral("layout-add"), QStringLiteral("--from"), nameEdit_->text().trimmed(), QStringLiteral("--side"), sideCombo_->currentText(), QStringLiteral("--to"), target}, 3000);
-    appendLog(commandOutput(result));
+    runCli({QStringLiteral("layout-add"), QStringLiteral("--from"), nameEdit_->text().trimmed(), QStringLiteral("--side"), sideCombo_->currentText(), QStringLiteral("--to"), target}, 3000);
     refreshAll();
 }
 
 void MainWindow::clearLayout() {
-    const CommandResult result = runCli({QStringLiteral("layout-clear")}, 3000);
-    appendLog(commandOutput(result));
+    runCli({QStringLiteral("layout-clear")}, 3000);
     refreshAll();
 }
 
@@ -640,14 +724,13 @@ void MainWindow::applyPeerPermissions() {
         if (idItem == nullptr || idItem->text().isEmpty()) {
             continue;
         }
-        const CommandResult result = runCli({
+        runCli({
             QStringLiteral("peer-permit"),
             QStringLiteral("--peer"), idItem->text(),
             QStringLiteral("--clipboard"), checkedArg(peersTable_->item(row, 4)),
             QStringLiteral("--files"), checkedArg(peersTable_->item(row, 5)),
             QStringLiteral("--input"), checkedArg(peersTable_->item(row, 6)),
         }, 3000);
-        appendLog(commandOutput(result));
     }
     refreshAll();
 }

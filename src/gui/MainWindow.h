@@ -14,6 +14,7 @@
 class QAction;
 class QCloseEvent;
 class QComboBox;
+class QDockWidget;
 class QGroupBox;
 class QLabel;
 class QLineEdit;
@@ -63,6 +64,7 @@ private:
     QWidget* createClientPage();
     QWidget* createPeersPage();
     QWidget* createDiagnosticsPage();
+    void createLogDock();
 
     QString resolveCliPath() const;
     CommandResult runCli(const QStringList& args, int timeoutMs = 8000);
@@ -117,6 +119,7 @@ private:
     QLineEdit* clipboardEdit_ = nullptr;
     QTableWidget* peersTable_ = nullptr;
     QTableWidget* capabilitiesTable_ = nullptr;
+    QDockWidget* logDock_ = nullptr;
     QTextEdit* logView_ = nullptr;
 };
 

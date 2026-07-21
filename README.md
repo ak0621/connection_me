@@ -16,7 +16,7 @@ Current implementation: C++20 daemon/CLI MVP plus an optional Qt Widgets desktop
 - Barrier-style screen configuration export/import with `section: screens`, `section: links`, and `section: options`.
 - Bidirectional screen layout links and control-channel messages for keepalive, screen info, enter/leave, and options.
 - Platform capability diagnostics.
-- Optional Qt Widgets desktop UI for local device settings, daemon control, pairing, peer permissions, layout, clipboard send, and diagnostics.
+- Optional Qt Widgets desktop UI for local device settings, daemon control, pairing, peer permissions, layout, clipboard send, diagnostics, and a visible runtime log dock on Linux, macOS, and Windows.
 
 ## Not Yet Implemented
 - Real encrypted transport. Pairing currently creates a shared secret, but the MVP transport is plaintext on LAN.
@@ -56,6 +56,12 @@ Package the current platform:
 scripts/package-current.sh
 ```
 
+Build a Linux AppImage on a Qt-enabled Linux host with `appimage-builder` installed:
+
+```bash
+scripts/package-appimage.sh
+```
+
 GUI build control:
 
 ```bash
@@ -65,17 +71,19 @@ cmake --build build --config Release --parallel
 
 `MYBARRIER_BUILD_GUI=AUTO` is the default. It builds the Qt UI when Qt 6 Widgets is available and otherwise keeps the CLI build working. Use `ON` in CI or release builds to require the desktop app.
 
-Current Linux package output on this host:
+Current Linux package output on this host uses LocalSend-style, platform-explicit names:
 
 ```text
-dist/mybarrier-linux-x86_64/mybarrier
-dist/mybarrier-linux-x86_64.tar.gz
-build/mybarrier-0.2.0-Linux-x86_64.deb
-build/mybarrier-0.2.0-Linux-x86_64.tar.gz
-build/mybarrier-0.2.0-Linux-x86_64.zip
+dist/MyBarrier-0.2.0-linux-x86-64/
+dist/MyBarrier-0.2.0-linux-x86-64.tar.gz
+build/MyBarrier-0.2.0-linux-x86-64.deb
+build/MyBarrier-0.2.0-linux-x86-64.tar.gz
+build/MyBarrier-0.2.0-linux-x86-64.zip
 ```
 
-macOS and Windows binaries must be built on macOS/Windows or by `.github/workflows/build.yml` CI runners. The workflow installs Qt and requires the GUI build, so the macOS DMG contains `MyBarrier.app` for app installation. See `docs/github-ci.md` for GitHub Actions packaging steps.
+When Qt is available, the `dist/` directory contains both the CLI and the `MyBarrier` desktop UI. The desktop UI opens with a `Run Log` window that records startup, daemon output, CLI commands, stdout/stderr, and exit codes.
+
+macOS and Windows binaries must be built on macOS/Windows or by `.github/workflows/build.yml` CI runners. The workflow installs Qt and requires the GUI build, so the generated runnable artifacts and installers contain the interactive `MyBarrier` desktop app. Linux CI also creates an AppImage from an AppDir recipe modeled after LocalSend. See `docs/github-ci.md` for GitHub Actions packaging steps.
 
 ## Basic Usage
 

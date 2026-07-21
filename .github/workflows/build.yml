@@ -5,6 +5,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  CMAKE_BUILD_TYPE: Release
+
 jobs:
   build:
     name: ${{ matrix.name }}
@@ -13,21 +16,35 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: linux-x86_64
+          - name: linux-x86-64
             os: ubuntu-24.04
-            artifact: mybarrier-linux-x86_64
-            exe: build/mybarrier
+            platform: linux-x86-64
+            artifact: MyBarrier-linux-x86-64
+            cli: build/mybarrier
+            gui: build/MyBarrier
           - name: macos-arm64
             os: macos-15
-            artifact: mybarrier-macos-arm64
-            exe: build/mybarrier
-          - name: windows-x86_64
+            platform: macos-arm-64
+            artifact: MyBarrier-macos-arm-64
+            cli: build/mybarrier
+            gui: build/MyBarrier.app
+          - name: windows-x86-64
             os: windows-2022
-            artifact: mybarrier-windows-x86_64
-            exe: build/Release/mybarrier.exe
+            platform: windows-x86-64
+            artifact: MyBarrier-windows-x86-64
+            cli: build/Release/mybarrier.exe
+            gui: build/Release/MyBarrier.exe
 
     steps:
       - uses: actions/checkout@v7
+
+      - name: Install Linux package tools
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y             libfuse2             squashfs-tools             qt6-base-dev             qt6-tools-dev             qt6-tools-dev-tools             libgl1-mesa-dev             libxcb-cursor-dev             qt6-wayland
+
       - name: Install Windows package tools
         if: runner.os == 'Windows'
         shell: powershell
@@ -37,41 +54,75 @@ jobs:
           if (Test-Path $nsisPath) {
             Add-Content $env:GITHUB_PATH $nsisPath
           }
+
       - name: Install Qt
+        if: runner.os != 'Linux'
         uses: jurplel/install-qt-action@v4
         with:
           version: "6.8.*"
           cache: true
+
       - name: Configure
         shell: bash
         run: |
           set -o pipefail
           mkdir -p build
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DMYBARRIER_BUILD_GUI=ON 2>&1 | tee build/configure.log
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }} -DMYBARRIER_BUILD_GUI=ON 2>&1 | tee build/configure.log
+
       - name: Build
         shell: bash
         run: |
           set -o pipefail
-          cmake --build build --config Release --parallel 2>&1 | tee build/build.log
-      - name: Package installer
+          cmake --build build --config ${{ env.CMAKE_BUILD_TYPE }} --parallel 2>&1 | tee build/build.log
+
+      - name: Package native installers
         shell: bash
         run: |
           set -o pipefail
-          cmake --build build --target package --config Release 2>&1 | tee build/package.log
+          cmake --build build --target package --config ${{ env.CMAKE_BUILD_TYPE }} 2>&1 | tee build/package.log
+
       - name: Smoke test on Unix
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          tests/smoke.sh ${{ matrix.exe }}
-          tests/discovery_smoke.sh ${{ matrix.exe }}
-          tests/barrier_config_smoke.sh ${{ matrix.exe }}
-      - name: Copy artifact
+          tests/smoke.sh ${{ matrix.cli }}
+          tests/discovery_smoke.sh ${{ matrix.cli }}
+          tests/barrier_config_smoke.sh ${{ matrix.cli }}
+
+      - name: Prepare Linux AppDir
+        if: runner.os == 'Linux'
         shell: bash
         run: |
-          mkdir -p dist/${{ matrix.artifact }}
-          cp "${{ matrix.exe }}" dist/${{ matrix.artifact }}/
-          cp README.md dist/${{ matrix.artifact }}/
-          cp docs/build-artifacts.md dist/${{ matrix.artifact }}/
+          rm -rf AppDir
+          DESTDIR="$PWD/AppDir" cmake --install build --config ${{ env.CMAKE_BUILD_TYPE }} --prefix /usr
+
+      - name: Build Linux AppImage
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        uses: AppImageCrafters/build-appimage@57c3bc6963f870ce3be103117de5b5e33ffbaeb6
+        with:
+          recipe: packaging/appimage/AppImageBuilder_x86_64.yml
+
+      - name: Copy runnable artifact
+        shell: bash
+        run: |
+          version=$(sed -n 's/^project(mybarrier VERSION \([^ ]*\).*/\1/p' CMakeLists.txt)
+          if [[ -z "$version" ]]; then version="dev"; fi
+          out="dist/MyBarrier-$version-${{ matrix.platform }}"
+          mkdir -p "$out"
+          cp "${{ matrix.cli }}" "$out/"
+          if [[ -d "${{ matrix.gui }}" ]]; then
+            cp -R "${{ matrix.gui }}" "$out/"
+          elif [[ -e "${{ matrix.gui }}" ]]; then
+            cp "${{ matrix.gui }}" "$out/"
+          else
+            echo "Expected GUI executable not found: ${{ matrix.gui }}" >&2
+            exit 1
+          fi
+          cp README.md "$out/"
+          cp docs/build-artifacts.md "$out/"
+          cp docs/implementation.md "$out/"
+
       - name: Upload diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v7
@@ -79,9 +130,12 @@ jobs:
           name: ${{ matrix.artifact }}-diagnostics
           path: build/*.log
           if-no-files-found: ignore
+
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: |
-            dist/${{ matrix.artifact }}
-            build/mybarrier-*
+            dist/MyBarrier-*
+            build/MyBarrier-*
+            ./*.AppImage
+          if-no-files-found: error

@@ -76,11 +76,19 @@ if(NOT MYBARRIER_BUILD_GUI_UPPER STREQUAL "OFF")
         set(MYBARRIER_GUI_AVAILABLE ON)
 
         if(COMMAND qt_generate_deploy_app_script)
-            qt_generate_deploy_app_script(
-                TARGET mybarrier-gui
-                OUTPUT_SCRIPT mybarrier_gui_deploy_script
-                NO_UNSUPPORTED_PLATFORM_ERROR
-            )
+            if(Qt6_VERSION VERSION_LESS "6.5.0")
+                qt_generate_deploy_app_script(
+                    TARGET mybarrier-gui
+                    FILENAME_VARIABLE mybarrier_gui_deploy_script
+                    NO_UNSUPPORTED_PLATFORM_ERROR
+                )
+            else()
+                qt_generate_deploy_app_script(
+                    TARGET mybarrier-gui
+                    OUTPUT_SCRIPT mybarrier_gui_deploy_script
+                    NO_UNSUPPORTED_PLATFORM_ERROR
+                )
+            endif()
         endif()
     elseif(MYBARRIER_BUILD_GUI_UPPER STREQUAL "ON")
         message(FATAL_ERROR "Qt6 Widgets was not found. Install Qt 6 or configure with -DMYBARRIER_BUILD_GUI=OFF.")
@@ -90,6 +98,7 @@ if(NOT MYBARRIER_BUILD_GUI_UPPER STREQUAL "OFF")
 endif()
 
 set(MYBARRIER_DOC_FILES README.md docs/build-artifacts.md docs/implementation.md docs/barrier-gap-analysis.md)
+set(MYBARRIER_APP_ICON packaging/icons/mybarrier.svg)
 
 if(APPLE AND MYBARRIER_GUI_AVAILABLE)
     install(TARGETS mybarrier-gui BUNDLE DESTINATION .)
@@ -126,16 +135,39 @@ else()
         endif()
         if(UNIX AND NOT APPLE)
             install(FILES packaging/mybarrier.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+            install(FILES ${MYBARRIER_APP_ICON}
+                DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps
+                RENAME mybarrier.svg
+            )
         endif()
     endif()
     install(FILES ${MYBARRIER_DOC_FILES} DESTINATION ${CMAKE_INSTALL_DOCDIR})
+endif()
+
+if(WIN32)
+    set(MYBARRIER_PACKAGE_OS "windows")
+elseif(APPLE)
+    set(MYBARRIER_PACKAGE_OS "macos")
+else()
+    set(MYBARRIER_PACKAGE_OS "linux")
+endif()
+
+string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" MYBARRIER_PACKAGE_PROCESSOR)
+if(MYBARRIER_PACKAGE_PROCESSOR MATCHES "^(x86_64|amd64)$")
+    set(MYBARRIER_PACKAGE_ARCH "x86-64")
+elseif(MYBARRIER_PACKAGE_PROCESSOR MATCHES "^(aarch64|arm64)$")
+    set(MYBARRIER_PACKAGE_ARCH "arm-64")
+elseif(MYBARRIER_PACKAGE_PROCESSOR STREQUAL "")
+    set(MYBARRIER_PACKAGE_ARCH "unknown")
+else()
+    string(REPLACE "_" "-" MYBARRIER_PACKAGE_ARCH "${MYBARRIER_PACKAGE_PROCESSOR}")
 endif()
 
 set(CPACK_PACKAGE_NAME "mybarrier")
 set(CPACK_PACKAGE_VENDOR "mybarrier")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Cross-platform LAN keyboard, clipboard, and file sharing prototype")
-set(CPACK_PACKAGE_FILE_NAME "mybarrier-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+set(CPACK_PACKAGE_FILE_NAME "MyBarrier-${PROJECT_VERSION}-${MYBARRIER_PACKAGE_OS}-${MYBARRIER_PACKAGE_ARCH}")
 set(CPACK_PACKAGE_CONTACT "mybarrier maintainers")
 
 if(WIN32)
@@ -145,6 +177,7 @@ if(WIN32)
     set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
     if(MYBARRIER_GUI_AVAILABLE)
         set(CPACK_PACKAGE_EXECUTABLES "MyBarrier" "MyBarrier")
+        set(CPACK_CREATE_DESKTOP_LINKS "MyBarrier")
     endif()
 elseif(APPLE)
     if(MYBARRIER_GUI_AVAILABLE)
@@ -157,7 +190,7 @@ else()
     set(CPACK_GENERATOR "DEB;TGZ;ZIP")
     set(CPACK_DEBIAN_PACKAGE_MAINTAINER "mybarrier maintainers")
     set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
-    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6, libstdc++6")
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 endif()
 
 include(CPack)
